@@ -52,6 +52,15 @@ class GameView(context: Context, attrs: AttributeSet?) :
     private var lives = 3
     private val MAX_LIVES = 3
 
+    private var weaponType = WeaponType.SINGLE
+    private val TRIPLE_WEAPON_SCORE = 10
+    private var tripleModeActivated = false
+
+    private val bonuses = mutableListOf<Bonus>()
+    private var bonusSpawnCounter = 0
+    private val BONUS_SPAWN_DELAY = 180
+    private val BONUS_FALL_SPEED = 5f
+
     // ============================================================
     // КИСТИ ДЛЯ РИСОВАНИЯ (РАСКОММЕНТИРОВАТЬ В ЗАДАНИИ 3)
     // ============================================================
@@ -103,6 +112,18 @@ class GameView(context: Context, attrs: AttributeSet?) :
     private val fastEnemyEmojiPaint = Paint().apply {
         textSize = 60f
         textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+    }
+
+    private val weaponBonusPaint = Paint().apply {
+        color = Color.CYAN
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val bombBonusPaint = Paint().apply {
+        color = Color.MAGENTA
+        style = Paint.Style.FILL
         isAntiAlias = true
     }
 
@@ -205,8 +226,8 @@ class GameView(context: Context, attrs: AttributeSet?) :
         // Пули
         val bulletsToRemove = mutableListOf<Bullet>()
         for (bullet in bullets) {
-            bullet.y -= 20f
-            if (bullet.y < 0) {
+            bullet.update()
+            if (bullet.y < 0 || bullet.x < 0 || bullet.x > width) {
                 bulletsToRemove.add(bullet)
             }
         }
@@ -237,6 +258,10 @@ class GameView(context: Context, attrs: AttributeSet?) :
                     bulletsHit.add(bullet)
                     enemiesHit.add(enemy)
                     score++
+                    if (!tripleModeActivated && score >= TRIPLE_WEAPON_SCORE) {
+                        weaponType = WeaponType.TRIPLE
+                        tripleModeActivated = true
+                    }
                     vibrate()
                     soundPool.play(hitSound, 1f, 1f, 0, 0, 1f)
                 }
@@ -252,6 +277,32 @@ class GameView(context: Context, attrs: AttributeSet?) :
             enemiesSpawned++
             enemySpawnCounter = 0
         }
+
+        bonusSpawnCounter++
+        if (bonusSpawnCounter >= BONUS_SPAWN_DELAY) {
+            spawnBonus()
+            bonusSpawnCounter = 0
+        }
+        val bonusesToRemove = mutableListOf<Bonus>()
+        for (bonus in bonuses) {
+            bonus.y += bonus.speed
+            if (bonus.y - bonus.size / 2 > height) {
+                bonusesToRemove.add(bonus)
+            }
+        }
+
+        val playerRadius = player.width / 2f
+        for (bonus in bonuses) {
+            val distance = Math.hypot(
+                (player.x - bonus.x).toDouble(),
+                (player.y - bonus.y).toDouble()
+            ).toFloat()
+            if (distance < playerRadius + bonus.size / 2) {
+                applyBonus(bonus.type)
+                bonusesToRemove.add(bonus)
+            }
+        }
+        bonuses.removeAll(bonusesToRemove)
     }
 
     private fun draw() {
@@ -277,6 +328,17 @@ class GameView(context: Context, attrs: AttributeSet?) :
         // Пули
         for (bullet in bullets) {
             canvas.drawCircle(bullet.x, bullet.y, 10f, bulletPaint)
+        }
+
+        // Бонусы
+        for (bonus in bonuses) {
+            val paint = if (bonus.type == BonusType.WEAPON) weaponBonusPaint else bombBonusPaint
+            canvas.drawCircle(bonus.x, bonus.y, bonus.size / 2f, paint)
+            val emojiPaint = if (bonus.type == BonusType.WEAPON) fastEnemyEmojiPaint else fastEnemyEmojiPaint
+            val emoji = if (bonus.type == BonusType.WEAPON) "🔫" else "💣"
+            val fm = emojiPaint.fontMetrics
+            val offsetY = -(fm.ascent + fm.descent) / 2f
+            canvas.drawText(emoji, bonus.x, bonus.y + offsetY, emojiPaint)
         }
 
         // Интерфейс
@@ -323,10 +385,18 @@ class GameView(context: Context, attrs: AttributeSet?) :
         }
     }
     private fun shoot() {
-        if (!gameOver) {
-            bullets.add(Bullet(player.x, player.y))
-            soundPool.play(shootSound, 1f, 1f, 0, 0, 1f)
+        if (gameOver) return
+        when (weaponType) {
+            WeaponType.SINGLE -> {
+                bullets.add(Bullet(player.x, player.y))
+            }
+            WeaponType.TRIPLE -> {
+                bullets.add(Bullet(player.x, player.y, angleDegrees = -45f))
+                bullets.add(Bullet(player.x, player.y, angleDegrees = 0f))
+                bullets.add(Bullet(player.x, player.y, angleDegrees = 45f))
+            }
         }
+        soundPool.play(shootSound, 1f, 1f, 0, 0, 1f)
     }
     private fun restartGame() {
         score = 0
@@ -339,6 +409,34 @@ class GameView(context: Context, attrs: AttributeSet?) :
         player.y = height - 200f
         enemiesSpawned = 0
         enemiesMissed = 0
+        weaponType = WeaponType.SINGLE
+        tripleModeActivated = false
+        bonuses.clear()
+        bonusSpawnCounter = 0
+    }
+
+    private fun spawnBonus() {
+        val x = Random.nextFloat() * (width - 100f) + 50f
+        val y = -50f
+        val type = if (Random.nextBoolean()) BonusType.WEAPON else BonusType.BOMB
+        bonuses.add(Bonus(x = x, y = y, type = type, speed = BONUS_FALL_SPEED))
+    }
+
+    private fun applyBonus(type: BonusType) {
+        when (type) {
+            BonusType.WEAPON -> {
+                // Первый тип: автоматически меняется вид оружия
+                weaponType = WeaponType.TRIPLE
+                tripleModeActivated = true
+            }
+            BonusType.BOMB -> {
+                // Второй тип: уничтожаем всех врагов на экране
+                score += enemies.size
+                enemies.clear()
+                vibrate()
+                soundPool.play(hitSound, 1f, 1f, 0, 0, 1f)
+            }
+        }
     }
 
     // ============================================================
